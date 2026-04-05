@@ -1,12 +1,31 @@
 import { metrics } from '@opentelemetry/api';
+import { env } from '../config/env.js';
 
-const meter = metrics.getMeter('my-app');
+const meter = metrics.getMeter(env.serviceName, env.serviceVersion);
 
-// Example metric
-export const requestCounter = meter.createCounter('requests_total', {
-  description: 'Total number of requests',
+// Counter: total requests (cumulative)
+export const requestCounter = meter.createCounter('k9_requests_total', {
+  description: 'Total number of HTTP requests',
+  unit: '{requests}',
 });
 
-export function recordRequest() {
-  requestCounter.add(1);
+// Histogram: request duration
+export const requestDuration = meter.createHistogram('k9_request_duration', {
+  description: 'HTTP request duration in milliseconds',
+  unit: 'ms',
+});
+
+// Record request with labels and duration
+export function recordRequest(method, path, statusCode, durationMs) {
+  requestCounter.add(1, {
+    method,
+    path,
+    status_code: String(statusCode),
+  });
+
+  requestDuration.record(durationMs, {
+    method,
+    path,
+    status_code: String(statusCode),
+  });
 }
