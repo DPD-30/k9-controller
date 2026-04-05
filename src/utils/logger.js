@@ -1,20 +1,48 @@
 import pino from 'pino';
+import fs from 'fs';
+import path from 'path';
 import { context, trace } from '@opentelemetry/api';
+import { env } from '../config/env.js';
 
-// Inject trace/span IDs into logs
+// ensure log directory exists
+const logDir = path.resolve('./logs');
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+// ---- trace correlation ----
 function traceMixin() {
   const span = trace.getSpan(context.active());
   if (!span) return {};
 
-  const spanContext = span.spanContext();
-
+  const ctx = span.spanContext();
   return {
-    trace_id: spanContext.traceId,
-    span_id: spanContext.spanId,
+    trace_id: ctx.traceId,
+    span_id: ctx.spanId,
   };
 }
 
-export const logger = pino({
-  level: 'info',
-  mixin: traceMixin,
+// ---- file destination ----
+const destination = pino.destination({
+  dest: path.join(logDir, 'app.log'),
+  sync: false, // async = better performance
 });
+
+export const logger = pino({
+  level: env.logLevel,
+
+  base: {
+    service: env.serviceName,
+    env: env.environment,
+  },
+
+  mixin: traceMixin,
+
+  timestamp: pino.stdTimeFunctions.isoTime,
+
+  formatters: {
+    level(label) {
+      return { level: label };
+    },
+  },
+}, destination);
