@@ -1,3 +1,5 @@
+import logger from '../observability/logger.js';
+
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
@@ -25,7 +27,7 @@ const metricExporter = new OTLPMetricExporter({
 
 // ---- Sampler (parent-based with configurable rate) ----
 // ParentBased: always sample if parent is sampled, otherwise use ratio sampler
-const sampler = new ParentBased({
+const sampler = new ParentBasedSampler({
   root: new TraceIdRatioBasedSampler(env.traceSampleRate),
 });
 
@@ -41,11 +43,11 @@ export const sdk = new NodeSDK({
 // ---- Start ----
 export async function startTelemetry() {
   await sdk.start();
-  console.log('OpenTelemetry started');
+  logger.info('OpenTelemetry started');
 }
 
 // ---- Shutdown ----
 export async function shutdownTelemetry() {
   await sdk.shutdown();
-  console.log('OpenTelemetry stopped');
+  logger.info('OpenTelemetry stopped');
 }

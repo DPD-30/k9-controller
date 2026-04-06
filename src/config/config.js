@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { defaults, schema } from './defaults.js';
+import logger from '../observability/logger.js'
 
 /**
  * Configuration manager with validation, persistence, and change events.
@@ -32,14 +33,14 @@ export class Config extends EventEmitter {
         // Validate the merged config
         const validation = this.validate();
         if (!validation.valid) {
-          console.warn('Config validation warnings:', validation.errors);
+          logger.warn('Config validation warnings:', validation.errors);
           // Continue with warnings - invalid values fall back to defaults
         }
 
         this.emit('loaded', this.config);
       } catch (err) {
-        console.warn(`Failed to load config from ${fullPath}:`, err.message);
-        console.warn('Using default configuration');
+        logger.warn(`Failed to load config from ${fullPath}:`, err.message);
+        logger.warn('Using default configuration');
       }
     } else {
       // No config file - create directory and save defaults

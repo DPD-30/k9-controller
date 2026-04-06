@@ -13,7 +13,7 @@ if (!fs.existsSync(logDir)) {
 // ---- trace correlation ----
 function traceMixin() {
   const span = trace.getSpan(context.active());
-  if (!span) return {};
+  if (!span) {return {};}
 
   const ctx = span.spanContext();
   return {

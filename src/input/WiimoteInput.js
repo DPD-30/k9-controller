@@ -156,7 +156,7 @@ export class WiimoteInput extends EventEmitter {
    * @private
    */
   _setupEventListeners() {
-    if (!this.remote) return;
+    if (!this.remote) {return;}
 
     // Wiimote buttons
     const wiimoteButtons = ['a', 'b', '1', '2', 'home', 'plus', 'minus', 'left', 'right', 'up', 'down'];
@@ -196,7 +196,7 @@ export class WiimoteInput extends EventEmitter {
    * @private
    */
   _setupStateSync() {
-    if (!this.remote) return;
+    if (!this.remote) {return;}
 
     // Poll for analog values (stick, accelerometer)
     const syncInterval = setInterval(() => {
