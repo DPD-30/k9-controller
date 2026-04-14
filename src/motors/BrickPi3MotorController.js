@@ -57,7 +57,7 @@ export class BrickPi3MotorController extends MotorController {
    * @returns {Promise<{ success: boolean, error?: string }>}
    */
   async initialize() {
-    console.log('init started brickpi')
+    logger.info('init started brickpi')
     if (this._initialized) {
       return { success: true };
     }
@@ -69,29 +69,29 @@ export class BrickPi3MotorController extends MotorController {
       this._bp = this.options.address
         ? new brickpi3.BrickPi3(this.options.address)
         : new brickpi3.BrickPi3();
-      console.log('init motor reset start')
+      logger.info('init motor reset start')
       // Reset motors on startup
       await this._resetMotors();
-      console.log('init motor read firmware start')
+      logger.info('init motor read firmware start')
       // Read firmware version to verify communication
       const version = await this._readFirmware();
       logger.info({ version }, 'BrickPi3 communication verified');
-console.log('init battery  start')
+logger.info('init battery  start')
       // Read battery voltage
    //   const voltage = await this._bp.get_voltage_battery();
    //   logger.info({ voltage }, 'BrickPi3 battery voltage');
    //   this._telemetry.voltage = voltage;
    
    this._telemetry.voltage = 11;
-   let voltage =11
+   const voltage =11
    
-console.log('init done')
+logger.info('init done')
       this._initialized = true;
       this.emit('initialized', { version, voltage });
 
       return { success: true };
     } catch (err) {
-      console.log(err)
+      logger.info(err)
       logger.error({ err }, 'Failed to initialize BrickPi3');
       this._initialized = false;
       return { success: false, error: err.message };

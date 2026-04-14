@@ -128,7 +128,7 @@ export class RoboClawMotorController extends MotorController {
     }
 
     const addr = this.options.address;
-    let crc = addr + command;
+    const crc = addr + command;
 
     // Build command buffer
     let cmdBytes;
