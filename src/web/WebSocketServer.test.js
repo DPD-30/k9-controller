@@ -105,7 +105,9 @@ describe('RobotWebSocketServer', () => {
         const ws = new WebSocket(`ws://localhost:${port}/ws`);
 
         ws.on('open', () => {
-          wsServer.send(ws, { type: 'direct', message: 'hello' });
+          // Get server-side WebSocket instance
+          const serverWs = Array.from(wsServer.clients)[0];
+          wsServer.send(serverWs, { type: 'direct', message: 'hello' });
         });
 
         ws.on('message', (data) => {
@@ -312,7 +314,7 @@ describe('RobotWebSocketServer', () => {
         ws.on('open', () => {
           // Wait for server to add client to Set
           setTimeout(() => {
-            assert.ok(wsServer.clients.has(ws));
+            assert.strictEqual(wsServer.getClientCount(), 1);
             ws.close();
             resolve();
           }, 10);

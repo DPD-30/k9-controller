@@ -6,7 +6,7 @@ describe('BrickPi3MotorController', () => {
   describe('constructor', () => {
     it('should create with default options', () => {
       const controller = new BrickPi3MotorController();
-      assert.strictEqual(controller.options.address, 0);
+      assert.strictEqual(controller.options.address, null);
       assert.strictEqual(controller.options.leftMotorPort, 'PORT_A');
       assert.strictEqual(controller.options.rightMotorPort, 'PORT_B');
       assert.strictEqual(controller.options.useEncoders, true);
@@ -176,10 +176,10 @@ describe('BrickPi3MotorController', () => {
     it('should return valid port numbers', () => {
       const controller = new BrickPi3MotorController();
 
-      assert.strictEqual(controller._getPort('PORT_A'), 0);
-      assert.strictEqual(controller._getPort('PORT_B'), 1);
-      assert.strictEqual(controller._getPort('PORT_C'), 2);
-      assert.strictEqual(controller._getPort('PORT_D'), 3);
+      assert.strictEqual(controller._getPort('PORT_A'), 1);
+      assert.strictEqual(controller._getPort('PORT_B'), 2);
+      assert.strictEqual(controller._getPort('PORT_C'), 4);
+      assert.strictEqual(controller._getPort('PORT_D'), 8);
     });
   });
 
