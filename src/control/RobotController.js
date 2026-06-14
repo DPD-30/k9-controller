@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { StateMachine, RobotState } from './StateMachine.js';
 import { logger } from '../observability/logger.js';
+import { BehaviorOrchestrator } from './BehaviorOrchestrator.js';
 
 /**
  * Main robot controller with control loop, safety checks, and speed ramping.
@@ -34,6 +35,7 @@ export class RobotController extends EventEmitter {
     this._stateMachine = new StateMachine();
     this._motorController = null;
     this._inputProvider = null;
+    this._behaviorOrchestrator = null;
 
     this._loopInterval = null;
     this._running = false;
@@ -62,12 +64,14 @@ export class RobotController extends EventEmitter {
    * Initialize the controller with dependencies.
    * @param {MotorController} motorController - Motor controller instance
    * @param {EventEmitter|object} inputProvider - Input provider (Wiimote, etc.)
+   * @param {BehaviorOrchestrator} behaviorOrchestrator - Behavior orchestrator instance
    * @returns {Promise<{ success: boolean, error?: string }>}
    */
-  async initialize(motorController, inputProvider) {
+  async initialize(motorController, inputProvider, behaviorOrchestrator) {
     try {
       this._motorController = motorController;
       this._inputProvider = inputProvider;
+      this._behaviorOrchestrator = behaviorOrchestrator;
 
       // Initialize state machine
       this._stateMachine.initialize();
@@ -191,6 +195,11 @@ export class RobotController extends EventEmitter {
     this._currentRightSpeed = 0;
     // Hard emergency stop - immediate cut to motors
     this._motorController.emergencyStop();
+
+    if (this._behaviorOrchestrator) {
+      this._behaviorOrchestrator.setMood('FAULT');
+    }
+
     this.emit('emergencyStop', context);
   }
 
@@ -203,6 +212,11 @@ export class RobotController extends EventEmitter {
     logger.error({ context }, 'Fault state entered');
     this._targetLeftSpeed = 0;
     this._targetRightSpeed = 0;
+
+    if (this._behaviorOrchestrator) {
+      this._behaviorOrchestrator.setMood('FAULT');
+    }
+
     this.emit('fault', context);
   }
 
@@ -287,6 +301,13 @@ export class RobotController extends EventEmitter {
    * @private
    */
   async _controlLoop() {
+    const deltaTime = this.options.loopIntervalMs;
+
+    // Update behavior animations
+    if (this._behaviorOrchestrator) {
+      this._behaviorOrchestrator.update(deltaTime);
+    }
+
     // Check input timeout
     this._checkInputTimeout();
 

@@ -4,6 +4,7 @@ import { MotorSpeed } from './components/MotorSpeed.jsx';
 import { ControlPanel } from './components/ControlPanel.jsx';
 import { TelemetryPanel } from './components/TelemetryPanel.jsx';
 import { ConnectionStatus } from './components/ConnectionStatus.jsx';
+import { ServoCalibration } from './components/ServoCalibration.jsx';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useRobotStatus } from './hooks/useRobotStatus.js';
 import { resetEStop } from './api/client.js';
@@ -13,6 +14,7 @@ export default function App() {
   const [motors, setMotors] = useState({ enabled: false, leftSpeed: 0, rightSpeed: 0 });
   const [telemetry, setTelemetry] = useState({ current: 0, temperature: 0 });
   const [wsClients, setWsClients] = useState(0);
+  const [view, setView] = useState('dashboard'); // 'dashboard' or 'calibration'
 
   const handleWebSocketMessage = useCallback((data) => {
     if (data.type === 'stateChanged') {
@@ -69,32 +71,52 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>K9 ROBOT CONTROL</h1>
+        <div className="nav-tabs flex gap-2">
+          <button
+            className={`btn-tab ${view === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setView('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            className={`btn-tab ${view === 'calibration' ? 'active' : ''}`}
+            onClick={() => setView('calibration')}
+          >
+            Calibration
+          </button>
+        </div>
         <ConnectionStatus connected={connected} />
       </header>
 
-      <StatusBar
-        state={robotState}
-        batteryVoltage={robotStatus?.batteryVoltage || 0}
-        batteryWarning={robotStatus?.batteryWarning || 'ok'}
-        motorsEnabled={motors.enabled}
-      />
+      {view === 'dashboard' ? (
+        <>
+          <StatusBar
+            state={robotState}
+            batteryVoltage={robotStatus?.batteryVoltage || 0}
+            batteryWarning={robotStatus?.batteryWarning || 'ok'}
+            motorsEnabled={motors.enabled}
+          />
 
-      <MotorSpeed
-        leftSpeed={motors.leftSpeed}
-        rightSpeed={motors.rightSpeed}
-      />
+          <MotorSpeed
+            leftSpeed={motors.leftSpeed}
+            rightSpeed={motors.rightSpeed}
+          />
 
-      <ControlPanel
-        state={robotState}
-        eStopActive={eStopActive}
-        onStateChange={handleStateChange}
-      />
+          <ControlPanel
+            state={robotState}
+            eStopActive={eStopActive}
+            onStateChange={handleStateChange}
+          />
 
-      <TelemetryPanel
-        current={telemetry.current}
-        temperature={telemetry.temperature}
-        wsClients={wsClients}
-      />
+          <TelemetryPanel
+            current={telemetry.current}
+            temperature={telemetry.temperature}
+            wsClients={wsClients}
+          />
+        </>
+      ) : (
+        <ServoCalibration />
+      )}
 
       {eStopActive && (
         <div className="estop-overlay">

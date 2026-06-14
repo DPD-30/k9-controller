@@ -69,7 +69,7 @@ export class RobotWebServer extends EventEmitter {
       }
 
       // REST API routes
-      const routes = createRobotRoutes(robotController, motorController);
+      const routes = createRobotRoutes(robotController, motorController, this.robotController?._behaviorOrchestrator);
       this.app.use('/api', routes);
       logger.info('REST API routes registered');
 

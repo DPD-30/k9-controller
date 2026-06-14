@@ -5,9 +5,10 @@ import { logger } from '../observability/logger.js';
  * Create REST API routes for robot control.
  * @param {RobotController} robotController - Robot controller instance
  * @param {MotorController} motorController - Motor controller instance (for telemetry)
+ * @param {BehaviorOrchestrator} behaviorOrchestrator - Behavior orchestrator instance
  * @returns {Router}
  */
-export function createRobotRoutes(robotController, motorController) {
+export function createRobotRoutes(robotController, motorController, behaviorOrchestrator) {
   const router = Router();
 
   /**
@@ -204,6 +205,66 @@ export function createRobotRoutes(robotController, motorController) {
         success: false,
         error: 'Failed to get telemetry',
       });
+    }
+  });
+
+  /**
+   * GET /api/config/servos
+   * Get current servo calibration values.
+   */
+  router.get('/config/servos', (req, res) => {
+    try {
+      const servoController = robotController._behaviorOrchestrator?._servoController;
+      if (!servoController) throw new Error('ServoController not initialized');
+
+      res.json({
+        success: true,
+        calibration: servoController.calibration
+      });
+    } catch (err) {
+      logger.error({ err }, 'Failed to get servo config');
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/config/servos/:name
+   * Update calibration for a specific servo.
+   */
+  router.post('/config/servos/:name', (req, res) => {
+    try {
+      const { name } = req.params;
+      const newCal = req.body;
+      const servoController = robotController._behaviorOrchestrator?._servoController;
+
+      if (!servoController) throw new Error('ServoController not initialized');
+
+      servoController.updateCalibration(name, newCal);
+      res.json({ success: true, message: `Updated calibration for ${name}` });
+    } catch (err) {
+      logger.error({ err }, 'Failed to update servo config');
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/control/servo-override
+   * Manually set a servo angle.
+   */
+  router.post('/control/servo-override', (req, res) => {
+    try {
+      const { name, angle } = req.body;
+      if (!name || angle === undefined) {
+        return res.status(400).json({ success: false, error: 'Missing name or angle' });
+      }
+
+      if (!behaviorOrchestrator) throw new Error('BehaviorOrchestrator not initialized');
+
+      behaviorOrchestrator.overrideServo(name, angle);
+      res.json({ success: true });
+    } catch (err) {
+      logger.error({ err }, 'Servo override failed');
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 
