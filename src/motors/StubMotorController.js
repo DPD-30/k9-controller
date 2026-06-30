@@ -1,158 +1,104 @@
 import { MotorController } from './MotorController.js';
+import { logger } from '../observability/logger.js';
 
 /**
- * Stub motor controller for development and testing.
- * Accepts all commands and tracks state but doesn't talk to real hardware.
- * Simulates telemetry data for testing.
- *
- * Telemetry recording to OpenTelemetry should happen at the application layer
- * (e.g., RobotController), not here. This keeps the motor controller focused
- * on hardware control and makes it easier to test.
+ * Simulated motor controller for development and testing.
+ * No hardware required.
  */
 export class StubMotorController extends MotorController {
-  constructor(options = {}) {
+  constructor(config = {}) {
     super();
-    this.options = {
-      telemetryUpdateIntervalMs: options.telemetryUpdateIntervalMs ?? 100,
-      baseVoltage: options.baseVoltage ?? 12.0,
-      restCurrent: options.restCurrent ?? 0.5,
-      currentPerSpeed: options.currentPerSpeed ?? 2.0,
-    };
-
-    this._enabled = false;
+    this.config = config;
+    this._isEnabled = false;
     this._leftSpeed = 0;
     this._rightSpeed = 0;
     this._initialized = false;
-    this._fault = false;
-    this._faults = [];
     this._telemetryInterval = null;
 
     this._telemetry = {
-      voltage: this.options.baseVoltage,
-      current: this.options.restCurrent,
-      temperature: 25.0,
-      leftSpeed: 0,
-      rightSpeed: 0,
+      voltage: config.baseVoltage ?? 12.6,
+      currentLeft: config.restCurrent ?? 0.5,
+      currentRight: config.restCurrent ?? 0.5,
+      speedLeft: 0,
+      speedRight: 0,
       enabled: false,
       fault: false,
-      faults: [],
     };
   }
 
   async initialize() {
-    if (this._initialized) {
-      return { success: true };
-    }
-
+    logger.info('StubMotorController: Initializing simulation...');
     this._initialized = true;
+    this._isEnabled = true; // Default to enabled for stub
     this._startTelemetrySimulation();
     this.emit('initialized');
-    return { success: true };
+    logger.info('StubMotorController: Initialized');
   }
 
-  async setSpeed(leftSpeed, rightSpeed) {
-    if (!this._initialized) {
-      return { success: false, error: 'Motor controller not initialized' };
+  async dispose() {
+    await this.disable();
+    this._stopTelemetrySimulation();
+    this._initialized = false;
+    logger.info('StubMotorController: Disposed');
+    this.emit('disposed');
+  }
+
+  async enable() {
+    this._isEnabled = true;
+    this._telemetry.enabled = true;
+    logger.info('StubMotorController: Motors ENABLED');
+    this.emit('enabled');
+  }
+
+  async disable() {
+    this._isEnabled = false;
+    this._telemetry.enabled = false;
+    await this.stop();
+    logger.info('StubMotorController: Motors DISABLED');
+    this.emit('disabled');
+  }
+
+  isEnabled() {
+    return this._isEnabled;
+  }
+
+  async setSpeeds(left, right) {
+    if (!this._isEnabled) {
+      logger.warn('StubMotorController: Attempted to set speeds while DISABLED');
+      return;
     }
 
-    if (!this._enabled) {
-      return { success: false, error: 'Motor controller is disabled' };
-    }
+    this._leftSpeed = left;
+    this._rightSpeed = right;
 
-    const clamp = (v) => Math.max(-1, Math.min(1, v));
-    leftSpeed = clamp(leftSpeed);
-    rightSpeed = clamp(rightSpeed);
-
-    const oldLeft = this._leftSpeed;
-    const oldRight = this._rightSpeed;
-
-    this._leftSpeed = leftSpeed;
-    this._rightSpeed = rightSpeed;
-    this.emit('speedChanged', { leftSpeed, rightSpeed, oldLeft, oldRight });
-
-    return { success: true };
+    logger.debug(`StubMotorController: Set speeds L=${left.toFixed(2)} R=${right.toFixed(2)}`);
+    this.emit('speedChanged', { left: this._leftSpeed, right: this._rightSpeed });
   }
 
   async stop() {
-    await this.setSpeed(0, 0);
+    await this.setSpeeds(0, 0);
+    logger.info('StubMotor ControllerBase: Motors STOPPED');
     this.emit('stopped');
   }
 
   async emergencyStop() {
     this._leftSpeed = 0;
     this._rightSpeed = 0;
-    this._enabled = false;
+    this._isEnabled = false;
     this._telemetry.enabled = false;
+    logger.error('StubMotorController: EMERGENCY STOP triggered!');
     this.emit('emergencyStop');
-  }
-
-  async enable() {
-    if (!this._initialized) {
-      return { success: false, error: 'Motor controller not initialized' };
-    }
-
-    if (this._fault) {
-      return { success: false, error: 'Cannot enable: fault condition exists' };
-    }
-
-    this._enabled = true;
-    this._telemetry.enabled = true;
-    this.emit('enabled');
-    return { success: true };
-  }
-
-  async disable() {
-    this._enabled = false;
-    this._telemetry.enabled = false;
-    await this.stop();
-    this.emit('disabled');
-  }
-
-  isEnabled() {
-    return this._enabled;
-  }
-
-  isInitialized() {
-    return this._initialized;
+    this.emit('fault', { reason: 'E-STOP' });
   }
 
   getTelemetry() {
     return { ...this._telemetry };
   }
 
-  simulateFault(faultCode) {
-    if (!this._faults.includes(faultCode)) {
-      this._faults.push(faultCode);
-    }
-    this._fault = true;
-    this._telemetry.fault = true;
-    this._telemetry.faults = [...this._faults];
-    this.emit('fault', { code: faultCode, faults: this._faults });
-  }
-
-  clearFault() {
-    this._fault = false;
-    this._faults = [];
-    this._telemetry.fault = false;
-    this._telemetry.faults = [];
-    this.emit('faultCleared');
-  }
-
-  setSimulatedVoltage(voltage) {
-    this._telemetry.voltage = voltage;
-  }
-
-  async dispose() {
-    this._stopTelemetrySimulation();
-    await this.emergencyStop();
-    this._initialized = false;
-    this.emit('disposed');
-  }
-
   _startTelemetrySimulation() {
     this._telemetryInterval = setInterval(() => {
       this._updateTelemetry();
-    }, this.options.telemetryUpdateIntervalMs);
+    }, 250);
   }
 
   _stopTelemetrySimulation() {
@@ -165,26 +111,15 @@ export class StubMotorController extends MotorController {
   _updateTelemetry() {
     const avgSpeed = (Math.abs(this._leftSpeed) + Math.abs(this._rightSpeed)) / 2;
     const loadDrop = avgSpeed * 0.5;
-    this._telemetry.voltage = this.options.baseVoltage - loadDrop;
 
-    const speedCurrent = avgSpeed * this.options.currentPerSpeed;
-    this._telemetry.current = this.options.restCurrent + speedCurrent;
-
-    const targetTemp = 25 + (avgSpeed * 20);
-    const tempChange = (targetTemp - this._telemetry.temperature) * 0.01;
-    this._telemetry.temperature += tempChange;
-
-    this._telemetry.leftSpeed = this._leftSpeed;
-    this._telemetry.rightSpeed = this._rightSpeed;
+    this._telemetry.voltage = (this.config.baseVoltage ?? 12.6) - loadDrop;
+    this._telemetry.currentLeft = Math.abs(this._leftSpeed) * 2.0 + (Math.random() * 0.1);
+    this._telemetry.currentRight = Math.abs(this._rightSpeed) * 2.0 + (Math.random() * 0.1);
+    this._telemetry.speedLeft = this._leftSpeed * 1000; // Mock encoder counts
+    this._telemetry.speedRight = this._rightSpeed * 1000;
+    this._telemetry.enabled = this._isEnabled;
 
     this.emit('telemetryUpdate', { ...this._telemetry });
-  }
-
-  getSpeed() {
-    return {
-      leftSpeed: this._leftSpeed,
-      rightSpeed: this._rightSpeed,
-    };
   }
 }
 
