@@ -454,10 +454,10 @@ export class RobotController extends EventEmitter {
     logger.trace({motorenabled:this._motorController.isEnabled(),left:this._targetLeftSpeed,right:this._targetRightSpeed,currentleft:this._currentLeftSpeed,currentright:this._currentRightSpeed},'update speed data')
     // Command motors
     if (this._motorController && this._motorController.isEnabled()) {
-      const speedChangedStatus = await this._motorController.setSpeed( this._currentLeftSpeed, this._currentRightSpeed);
-      logger.trace({speedChangedStatus},'applySpeedramping setspeed result.')
+      this._motorController.setSpeeds(this._currentLeftSpeed, this._currentRightSpeed).catch(err => {
+        logger.error({ err }, 'RoboClawMotorController: setSpeeds background failure');
+      });
     }
-   
   }
 
   /**

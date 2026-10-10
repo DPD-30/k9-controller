@@ -1,5 +1,5 @@
 import { RobotController } from './control/RobotController.js';
-import { BrickPi3MotorController } from './motors/BrickPi3MotorController.js';
+import { RoboClawMotorController } from './motors/RoboClawMotorController.js';
 import { WiimoteInput } from './input/WiimoteInput.js';
 import { RobotWebServer } from './web/RobotWebServer.js';
 import { logger } from './observability/logger.js';
@@ -29,10 +29,9 @@ async function main() {
   await startTelemetry();
 
   // Create instances
-  const motorController = new BrickPi3MotorController({
-    leftMotorPort: 'PORT_A',
-    rightMotorPort: 'PORT_B',
-    useEncoders: false,
+  const motorController = new RoboClawMotorController({
+    portPath: '/dev/ttyACM0',
+    baudRate: 9600,
   });
 
   const wiimoteInput = new WiimoteInput({
