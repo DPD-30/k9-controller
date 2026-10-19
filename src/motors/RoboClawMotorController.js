@@ -1,375 +1,224 @@
 import { MotorController } from './MotorController.js';
-import { SerialPort } from 'serialport';
+import { RoboClaw } from '@dpd-30/roboclaw-javascript';
 import { logger } from '../observability/logger.js';
 
 /**
- * RoboClaw motor controller implementation.
- * Communicates via UART using packet serial protocol.
- * Supports RoboClaw 2x15A, 2x30A, and compatible controllers.
+ * Hardware implementation of MotorController for RoboClaw controllers.
  */
 export class RoboClawMotorController extends MotorController {
-  constructor(options = {}) {
+  constructor(config) {
     super();
-    this.options = {
-      // Serial port path (e.g., '/dev/ttyAMA0' on Pi)
-      portPath: options.portPath ?? '/dev/ttyAMA0',
-      // Baud rate (default 9600 for RoboClaw)
-      baudRate: options.baudRate ?? 9600,
-      // RoboClaw address (0-127, default 128 in packet serial mode uses 0x80)
-      address: options.address ?? 128,
-      // Timeout for serial commands in ms
-      timeout: options.timeout ?? 1000,
-      // Encoder ticks per revolution (if using encoders)
-      encoderTicksPerRevolution: options.encoderTicksPerRevolution ?? null,
-    };
-
-    this._port = null;
-    this._enabled = false;
-    this._initialized = false;
-    this._leftSpeed = 0;
-    this._rightSpeed = 0;
-
-    this._telemetry = {
+    this.config = config;
+    this.address = 0x80; // Default address
+    this.roboclaw = null;
+    this._isEnabled = false;
+    this._telemetryInterval = null;
+    this._cachedTelemetry = {
       voltage: 0,
-      current: 0,
-      temperature: 0,
-      leftSpeed: 0,
-      rightSpeed: 0,
+      currentLeft: 0,
+      currentRight: 0,
+      speedLeft: 0,
+      speedRight: 0,
       enabled: false,
       fault: false,
-      faults: [],
     };
   }
 
-  /**
-   * Initialize the RoboClaw motor controller.
-   * Opens serial port and verifies communication.
-   * @returns {Promise<{ success: boolean, error?: string }>}
-   */
   async initialize() {
-    if (this._initialized) {
-      return { success: true };
-    }
+    logger.info('RoboClawMotorController: Initializing hardware...');
 
     try {
-      logger.info({ port: this.options.portPath, baud: this.options.baudRate }, 'Opening RoboClaw serial port');
+      // Instantiate the RoboClaw driver
+      // Params: port, baudRate, timeout(ms), retries
+      this.roboclaw = new RoboClaw(
+        this.config.motors.port ?? '/dev/ttyACM0',
+        this.config.motors.baudRate ?? 115200,
+        1000,
+        2
+      );
 
-      this._port = new SerialPort({
-        path: this.options.portPath,
-        baudRate: this.options.baudRate,
-        autoOpen: false,
-      });
+      await this.roboclaw.connect();
+      // Give port time to settle before further communication
+      await new Promise(resolve => setTimeout(resolve, 100));
+      logger.info('RoboClawMotorController: Connected to serial port');
 
-      await this._openPort();
+      // Verify communication
+      const version = await this._retry(() => this.roboclaw.readVersion(this.address));
+      logger.info(`RoboClawMotorController: Firmware version ${version} verified`);
 
-      // Verify communication by reading firmware version
-      const version = await this._readVersion();
-      logger.info({ version }, 'RoboClaw communication verified');
+      // Boot-time Sync: Sync PID and Acceleration settings to NVM
+      await this._syncHardwareSettings();
 
-      this._initialized = true;
-      this.emit('initialized', { version });
+      // Start Telemetry Heartbeat (250ms)
+      this._startTelemetryLoop();
 
+      this.emit('initialized');
+      logger.info('RoboClawMotorController: Initialization complete');
       return { success: true };
-    } catch (err) {
-      logger.error({ err }, 'Failed to initialize RoboClaw');
-      this._initialized = false;
-      return { success: false, error: err.message };
+    } catch (error) {
+      logger.error(`RoboClawMotorController: Initialization failed: ${error.message}`);
+      throw error;
     }
   }
 
-  /**
-   * Open serial port with timeout handling.
-   * @private
-   */
-  _openPort() {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Serial port open timeout'));
-      }, this.options.timeout);
-
-      this._port.open((err) => {
-        clearTimeout(timeout);
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  /**
-   * Read firmware version from RoboClaw.
-   * @private
-   * @returns {Promise<string>}
-   */
-  async _readVersion() {
-    // Command 21: Read Firmware Version
-    const response = await this._sendCommand(21, 0, 2);
-    if (response) {
-      const major = response[0];
-      const minor = response[1];
-      return `${major}.${minor}`;
-    }
-    return 'unknown';
-  }
-
-  /**
-   * Send a command to RoboClaw and optionally read response.
-   * @private
-   * @param {number} command - Command byte
-   * @param {number} value - Value to send (if any)
-   * @param {number} responseBytes - Number of bytes to read back
-   * @returns {Promise<Buffer|null>}
-   */
-  async _sendCommand(command, value = null, responseBytes = 0) {
-    if (!this._port || !this._port.isOpen) {
-      throw new Error('Serial port not open');
-    }
-
-    const addr = this.options.address;
-    const crc = addr + command;
-
-    // Build command buffer
-    let cmdBytes;
-    if (value !== null && value !== undefined) {
-      // Value is 0-255, single byte
-      cmdBytes = Buffer.from([addr, command, value & 0xFF]);
-    } else {
-      cmdBytes = Buffer.from([addr, command]);
-    }
-
-    // Write command
-    await this._write(cmdBytes);
-
-    // Read response if expected
-    if (responseBytes > 0) {
-      return this._read(responseBytes);
-    }
-
-    return null;
-  }
-
-  /**
-   * Write bytes to serial port.
-   * @private
-   */
-  _write(buffer) {
-    return new Promise((resolve, reject) => {
-      this._port.write(buffer, (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  /**
-   * Read bytes from serial port.
-   * @private
-   */
-  _read(byteCount) {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Serial read timeout'));
-      }, this.options.timeout);
-
-      const chunks = [];
-      let totalBytes = 0;
-
-      const onData = (data) => {
-        chunks.push(data);
-        totalBytes += data.length;
-
-        if (totalBytes >= byteCount) {
-          this._port.removeListener('data', onData);
-          clearTimeout(timeout);
-          resolve(Buffer.concat(chunks, byteCount));
-        }
-      };
-
-      this._port.on('data', onData);
-    });
-  }
-
-  /**
-   * Set motor speeds for tank-style differential drive.
-   * Uses M1 and M2 duty cycle commands (commands 34 and 35).
-   * @param {number} leftSpeed - Left motor speed (-1.0 to 1.0)
-   * @param {number} rightSpeed - Right motor speed (-1.0 to 1.0)
-   * @returns {Promise<{ success: boolean, error?: string }>}
-   */
-  async setSpeed(leftSpeed, rightSpeed) {
-    if (!this._initialized) {
-      return { success: false, error: 'Motor controller not initialized' };
-    }
-
-    if (!this._enabled) {
-      return { success: false, error: 'Motor controller is disabled' };
-    }
-
-    // Clamp speeds to valid range
-    const clamp = (v) => Math.max(-1, Math.min(1, v));
-    leftSpeed = clamp(leftSpeed);
-    rightSpeed = clamp(rightSpeed);
-
-    // Convert to 127-bit duty cycle (RoboClaw uses 0-127 for forward, 128-255 for reverse)
-    const toDutyCycle = (speed) => {
-      if (speed >= 0) {
-        return Math.round(speed * 127);
-      } else {
-        return Math.round(128 + (speed * 127));
+  async _syncHardwareSettings() {
+    logger.info('RoboClawMotorController: Syncing settings to NVM...');
+    try {
+      const { pid } = this.config.motors;
+      if (pid) {
+        // Set Velocity PID for both motors (P, I, D, QPPS)
+        await this.roboclaw.setM1VelocityPID(this.address, pid.kp, pid.ki, pid.kd, 44000);
+        await this.roboclaw.setM2VelocityPID(this.address, pid.kp, pid.ki, pid.kd, 44000);
       }
-    };
 
-    const leftDuty = toDutyCycle(leftSpeed);
-    const rightDuty = toDutyCycle(rightSpeed);
+      // Set Default Accelerations
+      const accel = this.config.motors.accelRate ?? 500;
+      const decel = this.config.motors.decelRate ?? 500;
+      await this.roboclaw.setM1DefaultAccel(this.address, accel, decel);
+      await this.roboclaw.setM2DefaultAccel(this.address, accel, decel);
 
-    try {
-      // Command 34: Set M1 Duty Cycle (0-255, 128=stop, 0-127=forward, 129-255=reverse)
-      await this._sendCommand(34, leftDuty);
-      // Command 35: Set M2 Duty Cycle
-      await this._sendCommand(35, rightDuty);
-
-      this._leftSpeed = leftSpeed;
-      this._rightSpeed = rightSpeed;
-      this.emit('speedChanged', { leftSpeed, rightSpeed, oldLeft: 0, oldRight: 0 });
-
-      return { success: true };
-    } catch (err) {
-      logger.error({ err }, 'Failed to set motor speed');
-      return { success: false, error: err.message };
+      // Save to NVM
+      await this.roboclaw.writeNVM(this.address);
+      logger.info('RoboClawMotorController: Hardware settings synced to NVM');
+    } catch (error) {
+      logger.warn(`RoboClawMotorController: Settings sync failed: ${error.message}`);
     }
   }
 
-  /**
-   * Stop both motors.
-   * @returns {Promise<void>}
-   */
+  async setSpeeds(left, right) {
+    if (!this._isEnabled) {
+      logger.warn('RoboClawMotorController: Attempted to set speeds while DISABLED');
+      return;
+    }
+
+    const mode = this.config.motors.controlMode ?? 'open';
+
+    try {
+      if (mode === 'closed') {
+        // Closed Loop: Map normalized -> Encoder Counts/Sec
+        const maxCounts = this.config.motors.maxEncoderCountsPerSec ?? 1000;
+        const targetL = left * maxCounts;
+        const targetR = right * maxCounts;
+
+        await this._retry(() => this.roboclaw.speedM1M2(this.address, targetL, targetR));
+      } else {
+        // Open Loop: Map normalized -> Duty Cycle (-32767 to 32767)
+        const maxDuty = this.config.motors.maxSpeedNormal ?? 0.5;
+        const boost = this.config.motors.maxSpeedBoost ?? 1.5;
+        const currentMax = this._isBoostActive() ? boost : maxDuty;
+
+        const mapToDuty = (val) => {
+          const clamped = Math.max(-1, Math.min(1, val));
+          return Math.round(clamped * currentMax * 32767);
+        };
+
+        await this._retry(() => this.roboclaw.dutyM1M2(this.address, mapToDuty(left), mapToDuty(right)));
+      }
+
+      this.emit('speedChanged', { left, right });
+    } catch (error) {
+      logger.error(`RoboClawMotorController: setSpeeds failed: ${error.message}`);
+      this.emit('fault', { reason: 'COMMUNICATION_FAILURE', error });
+      await this.emergencyStop();
+    }
+  }
+
   async stop() {
-    await this.setSpeed(0, 0);
+    await this.setSpeeds(0, 0);
     this.emit('stopped');
   }
 
-  /**
-   * Emergency stop - immediate hard cut to motors.
-   * @returns {Promise<void>}
-   */
   async emergencyStop() {
     try {
-      // Send stop commands to both motors immediately
-      await this._sendCommand(34, 128); // M1 stop (128 = neutral)
-      await this._sendCommand(35, 128); // M2 stop
-
-      this._leftSpeed = 0;
-      this._rightSpeed = 0;
-      this._enabled = false;
-      this._telemetry.enabled = false;
+      // Immediate stop via library (High priority)
+      await this.roboclaw.dutyM1M2(this.address, 0, 0);
+      this._isEnabled = false;
+      logger.error('RoboClawMotorController: EMERGENCY STOP executed');
       this.emit('emergencyStop');
-    } catch (err) {
-      logger.error({ err }, 'Emergency stop failed');
+    } catch (error) {
+      logger.error(`RoboClawMotorController: E-STOP failed: ${error.message}`);
     }
   }
 
-  /**
-   * Enable motor output.
-   * @returns {Promise<{ success: boolean, error?: string }>}
-   */
   async enable() {
-    if (!this._initialized) {
-      return { success: false, error: 'Motor controller not initialized' };
-    }
-
-    this._enabled = true;
-    this._telemetry.enabled = true;
+    this._isEnabled = true;
+    logger.info('RoboClawMotorController: Motors ENABLED');
     this.emit('enabled');
-    return { success: true };
   }
 
-  /**
-   * Disable motor output.
-   * @returns {Promise<void>}
-   */
   async disable() {
-    this._enabled = false;
-    this._telemetry.enabled = false;
+    this._isEnabled = false;
     await this.stop();
+    logger.info('RoboClawMotorController: Motors DISABLED');
     this.emit('disabled');
   }
 
-  /**
-   * Check if motors are currently enabled.
-   * @returns {boolean}
-   */
   isEnabled() {
-    return this._enabled;
+    return this._isEnabled;
   }
 
-  /**
-   * Get current motor telemetry data.
-   * For RoboClaw, this returns cached values.
-   * To get live voltage, use readMainVoltage().
-   * @returns {import('./MotorController.js').MotorTelemetry}
-   */
   getTelemetry() {
-    return { ...this._telemetry };
+    return { ...this._cachedTelemetry };
   }
 
-  /**
-   * Read main battery voltage from RoboClaw.
-   * Command 24: Read Main Battery Level
-   * @returns {Promise<number>} Voltage in volts (scaled by 10)
-   */
-  async readMainVoltage() {
-    try {
-      // Command 24 returns voltage * 10 as a 16-bit value
-      const response = await this._sendCommand(24, null, 2);
-      if (response) {
-        const voltage10 = (response[0] << 8) | response[1];
-        return voltage10 / 10;
-      }
-    } catch (err) {
-      logger.warn({ err }, 'Failed to read main voltage');
-    }
-    return 0;
-  }
-
-  /**
-   * Read logic battery level from RoboClaw.
-   * Command 26: Read Logic Battery Level
-   * @returns {Promise<number>} Voltage in volts (scaled by 10)
-   */
-  async readLogicVoltage() {
-    try {
-      const response = await this._sendCommand(26, null, 2);
-      if (response) {
-        const voltage10 = (response[0] << 8) | response[1];
-        return voltage10 / 10;
-      }
-    } catch (err) {
-      logger.warn({ err }, 'Failed to read logic voltage');
-    }
-    return 0;
-  }
-
-  /**
-   * Clean up resources and close serial port.
-   * @returns {Promise<void>}
-   */
   async dispose() {
-    await this.emergencyStop();
+    await this.disable();
+    this._stopTelemetryLoop();
+    if (this.roboclaw) {
+      await this.roboclaw.disconnect();
+    }
+    this.emit('disposed');
+  }
 
-    if (this._port) {
-      return new Promise((resolve) => {
-        this._port.close(() => {
-          this._port = null;
-          this._initialized = false;
-          this.emit('disposed');
-          resolve();
-        });
-      });
+  /**
+   * Helper to retry commands based on failure strategy.
+   */
+  async _retry(fn, retries = 3) {
+    let lastError;
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastError = e;
+        logger.debug(`RoboClawMotorController: Retry ${i+1}/${retries} failed: ${e.message}`);
+      }
+    }
+    throw lastError;
+  }
+
+  _isBoostActive() {
+    // This would be integrated with InputMapper/RobotController state
+    // For now, assume a property on the controller or a config check
+    return this.config?.motors?.boostActive ?? false;
+  }
+
+  _startTelemetryLoop() {
+    this._telemetryInterval = setInterval(async () => {
+      try {
+        // Using a low-priority read for status
+        const status = await this.roboclaw.getStatus(this.address);
+
+        this._cachedTelemetry = {
+          voltage: status.mbat / 10.0,
+          currentLeft: status.cur1 / 100.0,
+          currentRight: status.cur2 / 100.0,
+          speedLeft: status.speed1,
+          speedRight: status.speed2,
+          enabled: this._isEnabled,
+          fault: !!status.error,
+        };
+
+        this.emit('telemetryUpdate', this._cachedTelemetry);
+      } catch (error) {
+        logger.debug(`RoboClawMotorController: Telemetry sample failed: ${error.message}`);
+      }
+    }, 250);
+  }
+
+  _stopTelemetryLoop() {
+    if (this._telemetryInterval) {
+      clearInterval(this._telemetryInterval);
+      this._telemetryInterval = null;
     }
   }
 }

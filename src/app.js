@@ -30,8 +30,10 @@ async function main() {
 
   // Create instances
   const motorController = new RoboClawMotorController({
-    portPath: '/dev/ttyACM0',
-    baudRate: 9600,
+    motors: {
+      port: '/dev/ttyACM0',
+      baudRate: 9600,
+    }
   });
 
   const wiimoteInput = new WiimoteInput({
@@ -58,7 +60,7 @@ async function main() {
   const motorResult = await motorController.initialize();
   if (!motorResult.success) {
     logger.error(`[Error] Motor controller failed: ${motorResult.error}`);
-    process.exit(1);
+    await exitGracefully(1);
   }
   logger.info('[Init] Motor controller initialized');
 
@@ -68,7 +70,7 @@ async function main() {
   if (!wiimoteConnected) {
     logger.error('[Error] Failed to connect to Wiimote');
     await motorController.dispose();
-    process.exit(1);
+    await exitGracefully(1);
   }
   logger.info('[Init] Wiimote connected');
 
@@ -79,7 +81,7 @@ async function main() {
     logger.error(`[Error] Robot controller failed: ${robotResult.error}`);
     await motorController.dispose();
     await wiimoteInput.disconnect();
-    process.exit(1);
+    await exitGracefully(1);
   }
   logger.info('[Init] Robot controller initialized');
 
@@ -91,7 +93,7 @@ async function main() {
     await robotController.dispose();
     await motorController.dispose();
     await wiimoteInput.disconnect();
-    process.exit(1);
+    await exitGracefully(1);
   }
 
   // Start control loop
@@ -109,8 +111,12 @@ async function main() {
   logger.info('API:    http://localhost:' + (process.env.PORT || 3000) + '/api/status');
   logger.info('='.repeat(50));
 
-  // Graceful shutdown
-  let shuttingDown = false;
+  const exitGracefully = async (code) => {
+    // Give pino time to flush async transports
+    await new Promise(resolve => setTimeout(resolve, 200));
+    process.exit(code);
+  };
+
   const shutdown = async (signal) => {
     if (shuttingDown) {
       logger.warn('[Shutdown] Already shutting down, forcing exit...');
@@ -134,7 +140,7 @@ async function main() {
     await shutdownTelemetry();
 
     logger.info('[Shutdown] Complete');
-    process.exit(0);
+    await exitGracefully(0);
   };
 
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -146,8 +152,12 @@ async function main() {
   });
 }
 
-main().catch(err => {
+main().catch(async err => {
   logger.error('Fatal error:', err);
   logger.error(err.stack);
+  // Since main is async, we need a way to exit.
+  // We can't use exitGracefully here as it's defined inside main.
+  // But we can just add a small delay before exiting.
+  await new Promise(resolve => setTimeout(resolve, 200));
   process.exit(1);
 });

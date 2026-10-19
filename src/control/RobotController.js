@@ -77,13 +77,6 @@ export class RobotController extends EventEmitter {
       this._stateMachine.initialize();
       this._setupStateMachineListeners();
 
-      // Initialize motor controller
-      const motorResult = await this._motorController.initialize();
-      if (!motorResult.success) {
-        logger.error({ error: motorResult.error }, 'Motor controller initialization failed');
-        return { success: false, error: motorResult.error };
-      }
-
       // Setup input listeners if provider available
       if (this._inputProvider) {
         this._setupInputListeners();
